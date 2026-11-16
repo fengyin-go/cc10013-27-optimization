@@ -3,7 +3,7 @@
     <header class="page-head">
       <div>
         <h2>运营概览</h2>
-        <p class="page-desc">汇总各业务模块的关键指标，先看总量再看异常。</p>
+        <p class="page-desc">汇总各业务模块的关键指标，并按清洗规则版本展示处理量与版本差异。</p>
       </div>
     </header>
     <div class="stat-row">
@@ -25,6 +25,48 @@
         </tr>
       </tbody>
     </table>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h3>数据清洗版本处理量</h3>
+        <span class="hint">差异对比上一版本；只统计各版本自己的清洗结果</span>
+      </div>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>规则编号</th><th>目标字段</th><th>规则版本</th><th>已完成窗口</th>
+            <th>输入</th><th>重复剔除</th><th>输出</th><th>较上一版（剔除/输出）</th><th>状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in cleanseVersions" :key="`${row.rule_code}-${row.version}`">
+            <td>{{ row.rule_code }}</td>
+            <td>{{ row.target_field }}</td>
+            <td>{{ row.version }}</td>
+            <td>{{ row.window_done }} / {{ row.window_total }}</td>
+            <td>{{ row.input_rows }}</td>
+            <td>{{ row.removed_rows }}</td>
+            <td>{{ row.output_rows }}</td>
+            <td>
+              <template v-if="row.delta_vs_previous">
+                {{ signed(row.delta_vs_previous.removed_rows) }} /
+                {{ signed(row.delta_vs_previous.output_rows) }}
+              </template>
+              <span v-else class="muted">基线</span>
+            </td>
+            <td>
+              <span class="tag" :class="row.window_done === row.window_total ? 'ok' : 'warn'">
+                {{ row.window_done === row.window_total ? '已完成' : '处理中' }}
+              </span>
+              <span v-if="row.failed_windows.length" class="tag bad">中断</span>
+            </td>
+          </tr>
+          <tr v-if="!cleanseVersions.length">
+            <td colspan="9" class="empty-state">暂无清洗版本数据</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
   </section>
 </template>
 
@@ -33,19 +75,39 @@ import { onMounted, ref } from 'vue'
 
 import { fetchJson } from '@/api/client'
 
+type Counts = { input_rows: number; removed_rows: number; output_rows: number }
+type CleanseVersion = {
+  rule_code: string
+  target_field: string
+  version: string
+  window_done: number
+  window_total: number
+  failed_windows: string[]
+  input_rows: number
+  removed_rows: number
+  output_rows: number
+  delta_vs_previous: Counts | null
+}
 type Overview = {
   cards: { label: string; value: number }[]
   modules: { name: string; created: number; pending: number; abnormal: number }[]
+  cleanse?: { rules: { versions: CleanseVersion[] }[] }
 }
 
 const cards = ref<Overview['cards']>([])
 const moduleRows = ref<Overview['modules']>([])
+const cleanseVersions = ref<CleanseVersion[]>([])
+
+function signed(value: number) {
+  return value > 0 ? `+${value}` : `${value}`
+}
 
 onMounted(async () => {
   try {
     const payload = await fetchJson<Overview>('/api/overview')
     cards.value = payload.cards
     moduleRows.value = payload.modules
+    cleanseVersions.value = payload.cleanse?.rules.flatMap((rule) => rule.versions) ?? []
   } catch {
     cards.value = [{"label": "业务模块", "value": 0}, {"label": "今日新增", "value": 0}]
     moduleRows.value = [{"name": "接口管理", "created": 0, "pending": 0, "abnormal": 0}, {"name": "接口编排", "created": 0, "pending": 0, "abnormal": 0}, {"name": "频率控制", "created": 0, "pending": 0, "abnormal": 0}, {"name": "数据映射", "created": 0, "pending": 0, "abnormal": 0}, {"name": "响应校验", "created": 0, "pending": 0, "abnormal": 0}, {"name": "失败重试", "created": 0, "pending": 0, "abnormal": 0}, {"name": "数据聚合", "created": 0, "pending": 0, "abnormal": 0}, {"name": "凭证管理", "created": 0, "pending": 0, "abnormal": 0}, {"name": "缓存策略", "created": 0, "pending": 0, "abnormal": 0}, {"name": "数据转储", "created": 0, "pending": 0, "abnormal": 0}, {"name": "采集调度", "created": 0, "pending": 0, "abnormal": 0}, {"name": "采集监控", "created": 0, "pending": 0, "abnormal": 0}, {"name": "数据转换", "created": 0, "pending": 0, "abnormal": 0}, {"name": "数据清洗", "created": 0, "pending": 0, "abnormal": 0}, {"name": "限流配置", "created": 0, "pending": 0, "abnormal": 0}, {"name": "采集日志", "created": 0, "pending": 0, "abnormal": 0}, {"name": "增量采集", "created": 0, "pending": 0, "abnormal": 0}, {"name": "数据导出", "created": 0, "pending": 0, "abnormal": 0}]

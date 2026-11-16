@@ -68,6 +68,33 @@ npm run dev
 | 增量采集 | `delta` | 增量游标 | 游标编号、目标端点、增量字段 |
 | 数据导出 | `export` | 导出通道 | 通道编号、输出数据集、目标系统 |
 
+## 数据清洗重算流程
+
+清洗的处理入口集中在 `backend/app/services/cleanse.py`，口径计算在
+`cleanse_rules.py`：
+
+1. **源记录冻结版本**：源记录入库时写入 `frozen_version`，之后重算只切换
+   评估版本，不回写源记录。
+2. **按去重窗口重算**：`POST /api/cleanse/recompute` 接收
+   `rule_code`、`version`，可选 `batch`（只跑若干窗口）、`fail_window`（演练中断）。
+   每个窗口只保留一条唯一结果，重复剔除记录写入清洗待处理队列。
+3. **中断续做与幂等**：失败窗口会被记录，再次提交从失败窗口续做；已完成的
+   窗口跳过，重复提交不会二次剔除。
+4. **待处理队列**：`GET /api/cleanse/queue` 按规则/版本/窗口/批次筛选，
+   `GET /api/cleanse/queue/export` 的每条记录都带前后版本差异。
+5. **单一导出口径**：`GET /api/cleanse/dataset/export` 只读取一个规则版本的
+   完整结果；未完成全部窗口时返回 409，不会导出半套口径。
+6. **冲突取舍**：已发布窗口收到更晚更正会形成冲突，通过
+   `POST /api/cleanse/conflicts/resolve` 选择保留原值或采用更正，取舍会重算受
+   影响窗口的终态。
+7. **版本差异**：`GET /api/cleanse/diff` 的字段级差异只列规则版本与去重数量，
+   未被规则命中的字段不计入重复剔除；明细可回到目标字段原值。
+
+样例：`CLEANSE-401` R4→R5 目标字段 `email` 共 826 条；`CLEANSE-402` R5
+`phone_hash` 为 `input_rows=1240 / removed=17 / output_rows=1223`。
+
+回归检查：`cd backend && .venv/bin/python -m app.check_cleanse`。
+
 ## 约定
 
 - 每个模块的前端页面在 `frontend/src/views/<模块>/index.vue`，后端接口在

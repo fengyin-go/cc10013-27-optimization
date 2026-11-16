@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routers import ROUTERS
+from app.services.cleanse import cleanse_service
 from app.store import store
 
 app = FastAPI(title="API数据聚合采集中心", version="1.0.0")
@@ -34,5 +35,18 @@ def health() -> dict[str, object]:
 
 @app.get("/api/overview")
 def overview() -> dict[str, object]:
-    """运营概览：把各业务模块的待处理量汇总成看板卡片。"""
-    return store.overview()
+    """运营概览：各业务模块总量 + 数据清洗各版本处理量与前后差异。
+
+    数据清洗的口径来自清洗数据集本身（规则版本数、待处理剔除、版本冲突），
+    避免沿用规则清单的静态计数。
+    """
+    payload = store.overview()
+    cleanse = cleanse_service.rule_overview()
+    for item in payload["modules"]:
+        if item["name"] != "cleanse":
+            continue
+        item["created"] = sum(len(rule["versions"]) for rule in cleanse["rules"])
+        item["pending"] = sum(rule["queue_pending"] for rule in cleanse["rules"])
+        item["abnormal"] = sum(rule["conflicts"] for rule in cleanse["rules"])
+    payload["cleanse"] = cleanse
+    return payload
